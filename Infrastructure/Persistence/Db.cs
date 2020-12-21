@@ -2,42 +2,57 @@
 using System.Collections.Generic;
 using System.Text;
 using Npgsql;
+using System.Threading.Tasks;
 
 namespace Infrastructure.Persistence
 {
+    public interface IDbConnectionFactory
+    {
+        string GetConnStr();
+    }
+
     //inject using scoped using Db below
     public interface IDb
     {
-        IDbConnection GetConn();
+        Task<IDbConnection> GetOpenConn();
     }
 
     public class Db : IDb
     {
         private readonly string _connStr;
-        public Db(string connString) => _connStr = connString;
+        public Db(IDbConnectionFactory dbConnection) => _connStr = dbConnection.GetConnStr();
 
-        public IDbConnection GetConn() => new NpgsqlConnection(_connStr);
+        public async Task<IDbConnection> GetOpenConn()
+        {
+            var conn = new NpgsqlConnection(_connStr);
+            await conn.OpenAsync();
+            return conn;
+        }
     }
 
     //inject using transient using Db below
     public interface IPgCmd 
     {
-        NpgsqlCommand GetCmd(string query);
+        Task<NpgsqlCommand> GetCmd(string query);
     }
 
-    public class DbCmd : IPgCmd
+    public class PgCmd : IPgCmd
     {
-        private readonly NpgsqlConnection _conn;
+        private readonly IDb _db;
 
-        public DbCmd(IDb db) 
+        public PgCmd(IDb db) 
         {
-            var conn = db.GetConn();
-            if (conn is NpgsqlConnection pgConn)
-                _conn = pgConn;
-            else
-                throw new NpgsqlException("DbCmd need npgsql connection");
+            _db = db;
         }
 
-        public NpgsqlCommand GetCmd(string query)  =>  new NpgsqlCommand(query, _conn);
+        public async Task<NpgsqlCommand> GetCmd(string query)  
+        {
+            var conn = await _db.GetOpenConn();
+            if (conn is NpgsqlConnection pgConn)
+            {
+                return new NpgsqlCommand(query, pgConn);
+            }
+            return null;
+        }
     }
 }
